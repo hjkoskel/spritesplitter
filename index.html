@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprite Splitter</title>
+<meta name="description" content="Cut sprite sheets into separate PNGs, clip sub-pictures from frames, download as a ZIP. Runs fully offline.">
+<meta name="theme-color" content="#1d2026">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SpriteSplit">
+<style>
+  :root{
+    --bg:#15171b; --panel:#1d2026; --panel2:#24282f; --line:#323741; --text:#e3e6ea; --dim:#8c94a0;
+    --accent:#4fb3ff; --sel:#ffcc33; --bad:#ff5d5d; --warn:#ffa53a; --ok:#59d38a;
+    --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --side: 620px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#4a5160}
+  button.primary{background:var(--accent);color:#06121c;border-color:var(--accent);font-weight:600}
+  button.primary:disabled{opacity:.45;cursor:not-allowed}
+  button.icon{padding:2px 7px}
+  button.mini{padding:1px 6px;font-size:11px}
+  input[type=number],input[type=text],textarea{background:#101215;border:1px solid var(--line);border-radius:4px;padding:3px 5px}
+  input:focus,textarea:focus{outline:1px solid var(--accent);border-color:var(--accent)}
+  input[type=number]{width:62px;font-family:var(--mono)}
+  input[type=checkbox]{accent-color:var(--accent)}
+  .app{display:grid;grid-template-columns:minmax(0,1fr) 6px var(--side);grid-template-rows:auto minmax(0,1fr);height:100vh}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  header h1{font-size:14px;margin:0 8px 0 0;letter-spacing:.04em}
+  header .sp{flex:1}
+  .muted{color:var(--dim)}
+  .mono{font-family:var(--mono)}
+  label.file{display:inline-block}
+  label.file input{display:none}
+  /* splitter */
+  .splitter{cursor:col-resize;background:var(--line);position:relative;user-select:none}
+  .splitter::after{content:"";position:absolute;top:50%;left:1px;width:4px;height:36px;margin-top:-18px;border-left:1px dotted #6a7280;border-right:1px dotted #6a7280}
+  .splitter:hover,.splitter.active{background:var(--accent)}
+  body.resizing{cursor:col-resize;user-select:none}
+  body.resizing iframe,body.resizing canvas{pointer-events:none}
+  /* viewer */
+  .viewer{position:relative;overflow:auto;background:#0f1013}
+  .stage{display:inline-block;margin:16px;line-height:0;
+    background-color:#2a2d33;
+    background-image:linear-gradient(45deg,#3a3e46 25%,transparent 25%),linear-gradient(-45deg,#3a3e46 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#3a3e46 75%),linear-gradient(-45deg,transparent 75%,#3a3e46 75%);
+    background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0;box-shadow:0 0 0 1px var(--line)}
+  #cv{cursor:crosshair;display:block}
+  .drop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--dim);pointer-events:none;text-align:center;padding:20px}
+  .drop b{color:var(--text);font-size:15px}
+  .viewer.dragover{outline:2px dashed var(--accent);outline-offset:-8px}
+  .statusbar{position:sticky;bottom:0;left:0;display:flex;gap:14px;padding:4px 10px;background:rgba(21,23,27,.92);border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--dim);line-height:1.6;flex-wrap:wrap}
+  /* side */
+  aside{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel)}
+  .sect{padding:10px 12px;border-bottom:1px solid var(--line)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  details summary{cursor:pointer;color:var(--dim);user-select:none}
+  details[open] summary{color:var(--text);margin-bottom:8px}
+  .grid-form{display:grid;grid-template-columns:repeat(4,auto);gap:6px 10px;align-items:center;justify-content:start}
+  .grid-form label{color:var(--dim);font-size:12px}
+  .tablewrap{flex:1;overflow:auto;min-height:0}
+  table{border-collapse:collapse;width:100%}
+  th{position:sticky;top:0;background:var(--panel2);text-align:left;font-weight:500;color:var(--dim);font-size:12px;padding:5px 4px;border-bottom:1px solid var(--line);z-index:1;white-space:nowrap}
+  td{padding:3px 4px;border-bottom:1px solid #262a31;vertical-align:middle}
+  tr.sel td{background:#2b2a1e}
+  td.idx{font-family:var(--mono);color:var(--dim);text-align:right;width:34px;cursor:pointer;white-space:nowrap}
+  tr.sub td{background:#191b20;border-bottom-color:#22252b}
+  tr.sub.sel td{background:#2b2a1e}
+  tr.sub td.idx{font-size:11px}
+  tr.sub td.idx::before{content:"↳ ";color:#555c68}
+  table{table-layout:fixed}
+  td input[type=number]{width:100%;min-width:0}
+  td input.path{min-width:0!important}
+  td canvas.thumb:hover{outline:1px solid var(--accent)}
+  /* preview modal */
+  #pvModal .box{width:min(1100px,94vw)}
+  .pvStage{height:min(64vh,720px);display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:6px;overflow:auto;position:relative}
+  .pvStage.checker{background-color:#2a2d33;background-image:linear-gradient(45deg,#3a3e46 25%,transparent 25%),linear-gradient(-45deg,#3a3e46 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#3a3e46 75%),linear-gradient(-45deg,transparent 75%,#3a3e46 75%);background-size:16px 16px;background-position:0 0,0 8px,8px -8px,-8px 0}
+  .pvStage.black{background:#000} .pvStage.white{background:#fff} .pvStage.magenta{background:#ff00ff}
+  #pvCv{image-rendering:pixelated;display:block}
+  #pvTitle{font-family:var(--mono)}
+  .seg button.on{background:var(--accent);color:#06121c;border-color:var(--accent)}
+  .seg{display:inline-flex;gap:2px}
+  tr.sub td input[type=number]{border-style:dashed}
+  td input.path{width:100%;min-width:140px;font-family:var(--mono)}
+  td .resolved{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:2px;word-break:break-all}
+  td.pathcell{min-width:160px}
+  td.act{white-space:nowrap;text-align:right}
+  td canvas.thumb{display:block;width:36px;height:36px;image-rendering:pixelated;background:#2a2d33;border-radius:3px;cursor:pointer}
+  input.bad{border-color:var(--bad)!important;background:#2a1414}
+  input.warn{border-color:var(--warn)!important}
+  input.off{opacity:.5}
+  .empty{padding:24px 14px;color:var(--dim);text-align:center}
+  .foot{padding:10px 12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+  #msg{font-size:12px;min-height:16px}
+  #msg.bad{color:var(--bad)} #msg.ok{color:var(--ok)} #msg.warn{color:var(--warn)}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:10}
+  .modal.open{display:flex}
+  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;width:min(760px,92vw);display:flex;flex-direction:column;gap:10px}
+  .modal textarea{width:100%;height:50vh;font-family:var(--mono);font-size:12px;resize:vertical}
+  #ioErr{color:var(--bad);font-size:12px;min-height:16px}
+  kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:3px;padding:0 4px;color:var(--text)}
+  .help{font-size:12px;color:var(--dim);line-height:1.6}
+  @media (max-width:1000px){
+    .app{grid-template-columns:1fr;grid-template-rows:auto 50vh auto;height:auto}
+    .splitter{display:none}
+    aside{border-top:1px solid var(--line)} .tablewrap{max-height:60vh}
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <h1>SPRITE SPLITTER</h1>
+    <label class="file"><input type="file" id="fileIn" accept="image/*"><button type="button" onclick="this.previousElementSibling.click()">Open sprite sheet…</button></label>
+    <span id="imgInfo" class="muted mono"></span>
+    <button id="installBtn" style="display:none" title="Install as an app (works offline)">⤓ Install app</button>
+    <span class="sp"></span>
+    <span class="muted">Zoom</span>
+    <button class="icon" id="zOut" title="Zoom out">−</button>
+    <span id="zLbl" class="mono" style="min-width:34px;text-align:center">1×</span>
+    <button class="icon" id="zIn" title="Zoom in">+</button>
+    <button id="zFit" title="Fit to view">Fit</button>
+  </header>
+
+  <div class="viewer" id="viewer">
+    <div class="stage" id="stage" style="display:none"><canvas id="cv"></canvas></div>
+    <div class="drop" id="dropHint"><b>Drop a sprite sheet here</b><span>or use “Open sprite sheet…”, or paste an image (<kbd>Ctrl</kbd>+<kbd>V</kbd>)</span></div>
+    <div class="statusbar" id="statusbar"><span id="stPos">x — y —</span><span id="stRect"></span><span style="flex:1"></span><span>drag = new frame · <kbd>Shift</kbd>+drag in frame = new sub-picture · drag inside = move · corner = resize · arrows nudge (<kbd>Shift</kbd> resize)</span></div>
+  </div>
+
+  <div class="splitter" id="splitter" title="Drag to resize · double-click to reset"></div>
+
+  <aside>
+    <div class="sect">
+      <details id="gridDet">
+        <summary>Add a grid of frames (animation strip / regular sheet)</summary>
+        <div class="grid-form">
+          <label>x0</label><input type="number" id="gX" value="0">
+          <label>y0</label><input type="number" id="gY" value="0">
+          <label>width</label><input type="number" id="gW" value="32" min="1">
+          <label>height</label><input type="number" id="gH" value="32" min="1">
+          <label>columns</label><input type="number" id="gC" value="4" min="1">
+          <label>rows</label><input type="number" id="gR" value="1" min="1">
+          <label>gap x</label><input type="number" id="gGX" value="0">
+          <label>gap y</label><input type="number" id="gGY" value="0">
+          <label>start #</label><input type="number" id="gS" value="0">
+          <label></label><span></span>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <input type="text" id="gP" class="mono" style="flex:1" value="anim/walk_{i:2}.png" title="Name pattern">
+          <button id="gAdd">Add grid</button>
+        </div>
+        <div class="help" style="margin-top:6px">Pattern tokens: <span class="mono">{i}</span> running index, <span class="mono">{r}</span> row, <span class="mono">{c}</span> column. Pad with <span class="mono">{i:3}</span> → 007. Use <span class="mono">/</span> for folders.</div>
+      </details>
+      <details id="subDet" style="margin-top:6px">
+        <summary>Sub-pictures (clip a part out of each frame)</summary>
+        <div class="help">Press <b>+ sub</b> on a frame row, or <kbd>Shift</kbd>+drag inside a frame. Sub x0/y0 are <b>relative to the frame’s top-left</b>. Each sub-picture has its own path; these tokens refer to its frame:
+          <span class="mono">{name}</span> frame file name without .png, <span class="mono">{dir}</span> frame folder, <span class="mono">{n}</span> frame number (1-based, pad with <span class="mono">{n:3}</span>), <span class="mono">{s}</span> sub number.
+          Untick <b>out</b> on a frame to export only its sub-pictures.</div>
+        <div class="row" style="margin-top:8px">
+          <button id="copySubs" title="Replace sub-pictures of all other frames with copies of the selected frame's sub-pictures">Copy selected frame’s subs to all frames</button>
+          <button id="allOut" title="Toggle full-frame export for all frames">Toggle all “out”</button>
+        </div>
+      </details>
+    </div>
+    <div class="sect row">
+      <button id="addRow">+ Add frame</button>
+      <button id="dupRow" title="Duplicate selected frame (with its sub-pictures)">Duplicate</button>
+      <button id="ioBtn">Import / export…</button>
+      <span class="sp" style="flex:1"></span>
+      <button id="clearAll" title="Remove all rows">Clear</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <colgroup><col style="width:46px"><col style="width:46px"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col><col style="width:34px"><col style="width:86px"></colgroup>
+        <thead><tr><th>#</th><th></th><th>x0</th><th>y0</th><th>w</th><th>h</th><th>path / filename</th><th title="Export the full frame as its own file">out</th><th></th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div class="empty" id="emptyMsg">No frames yet. Drag a rectangle on the image, add a frame, or add a grid.</div>
+    </div>
+    <div class="foot">
+      <div class="row">
+        <input type="text" id="zipName" class="mono" style="flex:1" value="sprites.zip" title="Zip file name">
+        <button class="primary" id="process">Process → ZIP</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+  </aside>
+</div>
+
+<div class="modal" id="pvModal">
+  <div class="box">
+    <div class="row">
+      <b id="pvTitle"></b><span id="pvInfo" class="muted mono"></span>
+      <span style="flex:1"></span>
+      <button class="icon" id="pvClose" title="Close (Esc)">✕</button>
+    </div>
+    <div class="pvStage checker" id="pvStage"><canvas id="pvCv"></canvas></div>
+    <div class="row">
+      <button id="pvPrev" title="Previous (←)">◀</button>
+      <button id="pvPlay" title="Play / pause (Space)" style="min-width:70px">▶ Play</button>
+      <button id="pvNext" title="Next (→)">▶</button>
+      <span class="muted">fps</span><input type="number" id="pvFps" value="8" min="1" max="60" style="width:52px">
+      <span class="muted" id="pvSeq"></span>
+      <span style="flex:1"></span>
+      <span class="muted">Scale</span>
+      <button class="icon" id="pvZOut">−</button><span id="pvZ" class="mono" style="min-width:52px;text-align:center"></span><button class="icon" id="pvZIn">+</button>
+      <button id="pvFit">Fit</button>
+      <span class="muted">Bg</span>
+      <span class="seg" id="pvBg"><button data-bg="checker" class="on" title="Checkerboard">▦</button><button data-bg="black" title="Black">■</button><button data-bg="white" title="White">□</button><button data-bg="magenta" title="Magenta">◆</button></span>
+    </div>
+    <div class="help">Frames step through all frames; a sub-picture steps through the same sub-picture number in every frame that has one, so you can watch the changing part animate. Keys: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play, <kbd>+</kbd>/<kbd>−</kbd> scale, <kbd>Esc</kbd> close.</div>
+  </div>
+</div>
+
+<div class="modal" id="ioModal">
+  <div class="box">
+    <div class="row"><b>Frame table as JSON</b><span class="sp" style="flex:1"></span><span class="muted">Edit and Apply, or copy to keep it.</span></div>
+    <textarea id="ioText" spellcheck="false"></textarea>
+    <div id="ioErr"></div>
+    <div class="row">
+      <label class="file"><input type="file" id="ioFile" accept=".json,.csv,.txt,application/json,text/csv"><button type="button" onclick="this.previousElementSibling.click()">Load file…</button></label>
+      <button id="ioCopy">Copy</button>
+      <button id="ioSave">Save .json</button>
+      <span class="muted" style="flex:1">CSV also works: <span class="mono">x,y,w,h,path</span> per frame, <span class="mono">sub,x,y,w,h,path</span> for its sub-pictures</span>
+      <button id="ioClose">Cancel</button>
+      <button class="primary" id="ioApply">Apply</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ---------- state ----------
+   clips: [{x,y,w,h,path,out:bool,subs:[{x,y,w,h,path}]}]   sub x/y relative to frame */
+let img = null, imgName = "sprites";
+let clips = [];
+let sel = { f: -1, s: -1 };
+let zoom = 1;
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const viewer = document.getElementById("viewer"), stage = document.getElementById("stage");
+const tbody = document.getElementById("tbody");
+const $ = id => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+/* ---------- downloads (platform capability, falls back to <a download>) ---------- */
+let dlNS = null;
+try { if (window.claude && typeof claude.use === "function") claude.use("downloads").then(n => dlNS = n, () => {}); } catch (e) {}
+async function saveFile(filename, blob) {
+  if (dlNS) {
+    try { await dlNS.save({ filename, data: blob }); return "saved"; }
+    catch (e) {
+      if (e && e.code === "declined") return "declined";
+      if (e && e.code === "rate_limited") return "busy";
+      if (e && !["unavailable","not_granted","capability_disabled","capability_removed"].includes(e.code)) throw new Error(e.message || e.code);
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  return "saved";
+}
+
+/* ---------- resizable side panel ---------- */
+(() => {
+  const sp = $("splitter"), root = document.documentElement, DEF = 620;
+  const clampW = w => Math.round(Math.min(Math.max(w, 340), Math.max(340, window.innerWidth - 220)));
+  const setW = w => { root.style.setProperty("--side", clampW(w) + "px"); };
+  const saved = parseInt(store.get("spritesplitter.side"), 10); if (saved) setW(saved);
+  let startX = 0, startW = 0, active = false;
+  sp.addEventListener("pointerdown", e => {
+    active = true; startX = e.clientX; startW = document.querySelector("aside").getBoundingClientRect().width;
+    sp.setPointerCapture(e.pointerId); sp.classList.add("active"); document.body.classList.add("resizing"); e.preventDefault();
+  });
+  sp.addEventListener("pointermove", e => { if (active) setW(startW + (startX - e.clientX)); });
+  const end = () => { if (!active) return; active = false; sp.classList.remove("active"); document.body.classList.remove("resizing");
+    store.set("spritesplitter.side", parseInt(getComputedStyle(root).getPropertyValue("--side"), 10)); };
+  sp.addEventListener("pointerup", end); sp.addEventListener("pointercancel", end);
+  sp.addEventListener("dblclick", () => { setW(DEF); store.set("spritesplitter.side", DEF); });
+  window.addEventListener("resize", () => setW(parseInt(getComputedStyle(root).getPropertyValue("--side"), 10) || DEF));
+})();
+
+/* ---------- persistence of table (per browser) ---------- */
+function persist() { store.set("spritesplitter.clips", JSON.stringify(clips)); store.set("spritesplitter.zip", $("zipName").value); }
+function restore() {
+  try { const c = JSON.parse(store.get("spritesplitter.clips") || "null"); if (Array.isArray(c)) clips = c.map(normClip); } catch (e) {}
+  const z = store.get("spritesplitter.zip"); if (z) $("zipName").value = z;
+}
+function normRect(c) { return { x: Math.round(+c.x || 0), y: Math.round(+c.y || 0), w: Math.max(1, Math.round(+c.w || 1)), h: Math.max(1, Math.round(+c.h || 1)), path: String(c.path ?? "") }; }
+function normClip(c) { const r = normRect(c); r.out = c.out !== false; r.subs = Array.isArray(c.subs) ? c.subs.map(normRect) : []; return r; }
+
+/* ---------- image loading ---------- */
+function loadBlob(file) {
+  if (!file || !file.type.startsWith("image/")) { setMsg("That is not an image file.", "bad"); return; }
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => {
+    img = im;
+    imgName = (file.name || "sprites").replace(/\.[^.]+$/, "") || "sprites";
+    if (!$("zipName").dataset.touched) $("zipName").value = imgName + ".zip";
+    $("imgInfo").textContent = `${file.name || "pasted image"} · ${im.naturalWidth}×${im.naturalHeight}`;
+    $("dropHint").style.display = "none"; stage.style.display = "inline-block";
+    fitZoom(); renderTable(); draw(); setMsg("");
+  };
+  im.onerror = () => setMsg("Could not decode that image.", "bad");
+  im.src = url;
+}
+$("fileIn").addEventListener("change", e => { loadBlob(e.target.files[0]); e.target.value = ""; });
+viewer.addEventListener("dragover", e => { e.preventDefault(); viewer.classList.add("dragover"); });
+viewer.addEventListener("dragleave", () => viewer.classList.remove("dragover"));
+viewer.addEventListener("drop", e => { e.preventDefault(); viewer.classList.remove("dragover"); if (e.dataTransfer.files[0]) loadBlob(e.dataTransfer.files[0]); });
+document.addEventListener("paste", e => {
+  if (e.target.matches("input,textarea")) return;
+  for (const it of e.clipboardData.items) if (it.type.startsWith("image/")) { loadBlob(it.getAsFile()); break; }
+});
+
+/* ---------- zoom ---------- */
+const ZOOMS = [0.25, 0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+function maxZoomFor() { return img ? Math.max(0.25, Math.floor(16000 / Math.max(img.naturalWidth, img.naturalHeight) * 4) / 4) : 32; }
+function setZoom(z) {
+  zoom = Math.min(Math.max(z, 0.25), maxZoomFor());
+  $("zLbl").textContent = (zoom >= 1 ? zoom : zoom.toFixed(2).replace(/0+$/, "")) + "×";
+  draw();
+}
+function fitZoom() {
+  if (!img) return;
+  const aw = viewer.clientWidth - 40, ah = viewer.clientHeight - 70;
+  const f = Math.min(aw / img.naturalWidth, ah / img.naturalHeight);
+  let z = ZOOMS[0]; for (const q of ZOOMS) if (q <= f) z = q;
+  setZoom(z);
+}
+$("zIn").onclick = () => setZoom(ZOOMS.find(q => q > zoom) ?? zoom);
+$("zOut").onclick = () => setZoom([...ZOOMS].reverse().find(q => q < zoom) ?? zoom);
+$("zFit").onclick = fitZoom;
+viewer.addEventListener("wheel", e => {
+  if (!e.ctrlKey || !img) return; e.preventDefault();
+  (e.deltaY < 0 ? $("zIn") : $("zOut")).onclick();
+}, { passive: false });
+
+/* ---------- geometry helpers ---------- */
+function absRect(f, s) { const c = clips[f]; if (s < 0) return c; const u = c.subs[s]; return { x: c.x + u.x, y: c.y + u.y, w: u.w, h: u.h }; }
+function selItem() { if (sel.f < 0 || !clips[sel.f]) return null; return sel.s < 0 ? clips[sel.f] : clips[sel.f].subs[sel.s] || null; }
+function inside(p, r) { return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h; }
+function hit(p, framesOnly) {
+  if (!framesOnly) {
+    // subs of the selected frame get priority, then any sub
+    if (sel.f >= 0 && clips[sel.f]) for (let s = clips[sel.f].subs.length - 1; s >= 0; s--) if (inside(p, absRect(sel.f, s))) return { f: sel.f, s };
+    for (let f = clips.length - 1; f >= 0; f--) for (let s = clips[f].subs.length - 1; s >= 0; s--) if (inside(p, absRect(f, s))) return { f, s };
+  }
+  for (let f = clips.length - 1; f >= 0; f--) if (inside(p, clips[f])) return { f, s: -1 };
+  return null;
+}
+
+/* ---------- drawing ---------- */
+const COLORS = ["#4fb3ff","#ff6fb1","#59d38a","#c48bff","#ff9f43","#36d6d0","#f5e663","#ff6b6b"];
+function draw() {
+  if (!img) return;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  cv.width = Math.round(W * zoom); cv.height = Math.round(H * zoom);
+  ctx.imageSmoothingEnabled = zoom < 1;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(img, 0, 0, cv.width, cv.height);
+  if (zoom >= 8) {
+    ctx.strokeStyle = "rgba(255,255,255,.07)"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = 0; x <= W; x++) { ctx.moveTo(x * zoom + .5, 0); ctx.lineTo(x * zoom + .5, cv.height); }
+    for (let y = 0; y <= H; y++) { ctx.moveTo(0, y * zoom + .5); ctx.lineTo(cv.width, y * zoom + .5); }
+    ctx.stroke();
+  }
+  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace"; ctx.textBaseline = "top";
+  const box = (r, col, selected, dashed, label) => {
+    const x = r.x * zoom, y = r.y * zoom, w = r.w * zoom, h = r.h * zoom;
+    if (selected) { ctx.fillStyle = "rgba(255,204,51,.14)"; ctx.fillRect(x, y, w, h); }
+    ctx.setLineDash(dashed ? [4, 3] : []);
+    ctx.lineWidth = selected ? 2 : 1; ctx.strokeStyle = selected ? "#ffcc33" : col;
+    ctx.strokeRect(x + .5, y + .5, Math.max(0, w - 1), Math.max(0, h - 1));
+    ctx.setLineDash([]);
+    if (label && w > 14 && h > 12) {
+      const tw = ctx.measureText(label).width + 4;
+      ctx.fillStyle = selected ? "#ffcc33" : col; ctx.fillRect(x, y, tw, 13); ctx.fillStyle = "#000"; ctx.fillText(label, x + 2, y + 1);
+    }
+    if (selected) { ctx.fillStyle = "#ffcc33"; ctx.fillRect(x + w - 6, y + h - 6, 6, 6); }
+  };
+  clips.forEach((c, f) => box(c, COLORS[f % COLORS.length], sel.f === f && sel.s < 0, false, String(f + 1)));
+  clips.forEach((c, f) => c.subs.forEach((u, s) => {
+    const showLbl = sel.f === f || clips.length <= 12;
+    box(absRect(f, s), COLORS[f % COLORS.length], sel.f === f && sel.s === s, true, showLbl ? `${f + 1}.${s + 1}` : "");
+  }));
+  if (drag && drag.mode === "new") box(drag.abs, "#ffcc33", true, !!drag.sub, "");
+  const it = selItem();
+  $("stRect").textContent = it ? (sel.s < 0 ? `#${sel.f + 1}: ${it.x},${it.y} ${it.w}×${it.h}` : `#${sel.f + 1}.${sel.s + 1}: +${it.x},+${it.y} ${it.w}×${it.h}`) : "";
+}
+
+/* ---------- canvas interaction ---------- */
+let drag = null;
+function imgPt(e) { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / zoom, y: (e.clientY - r.top) / zoom }; }
+function nearCorner(p, r) { const t = 7 / zoom; return Math.abs(p.x - (r.x + r.w)) <= t && Math.abs(p.y - (r.y + r.h)) <= t; }
+cv.addEventListener("mousedown", e => {
+  if (!img || e.button !== 0) return;
+  e.preventDefault();
+  const p = imgPt(e);
+  const it = selItem();
+  if (it && !e.altKey && !e.shiftKey && nearCorner(p, absRect(sel.f, sel.s))) { drag = { mode: "resize", ...sel, p0: p, o: { ...it } }; return; }
+  if (e.shiftKey) { // new sub-picture inside the frame under the cursor
+    const h = hit(p, true);
+    if (h) { const x = Math.floor(p.x), y = Math.floor(p.y); drag = { mode: "new", sub: true, f: h.f, p0: { x, y }, abs: { x, y, w: 1, h: 1 } }; return; }
+  }
+  const h = e.altKey ? null : hit(p);
+  if (h) { select(h.f, h.s, true); const o = h.s < 0 ? clips[h.f] : clips[h.f].subs[h.s]; drag = { mode: "move", ...h, p0: p, o: { ...o } }; }
+  else { const x = Math.floor(p.x), y = Math.floor(p.y); drag = { mode: "new", p0: { x, y }, abs: { x, y, w: 1, h: 1 } }; }
+});
+window.addEventListener("mousemove", e => {
+  if (!img) return;
+  const p = imgPt(e);
+  if (e.target === cv) {
+    $("stPos").textContent = `x ${Math.floor(p.x)} y ${Math.floor(p.y)}`;
+    if (!drag) { const it = selItem(); cv.style.cursor = it && nearCorner(p, absRect(sel.f, sel.s)) ? "nwse-resize" : e.shiftKey ? "crosshair" : hit(p) ? "move" : "crosshair"; }
+  }
+  if (!drag) return;
+  if (drag.mode === "new") {
+    const x1 = Math.floor(p.x), y1 = Math.floor(p.y), a = drag.p0;
+    const b = drag.sub ? clips[drag.f] : { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight };
+    const lx = Math.max(b.x, Math.min(a.x, x1)), ly = Math.max(b.y, Math.min(a.y, y1));
+    const hx = Math.min(b.x + b.w - 1, Math.max(a.x, x1)), hy = Math.min(b.y + b.h - 1, Math.max(a.y, y1));
+    Object.assign(drag.abs, { x: lx, y: ly, w: Math.max(1, hx - lx + 1), h: Math.max(1, hy - ly + 1) });
+    $("stRect").textContent = drag.sub ? `new sub in #${drag.f + 1}: +${lx - b.x},+${ly - b.y} ${drag.abs.w}×${drag.abs.h}` : `new: ${lx},${ly} ${drag.abs.w}×${drag.abs.h}`;
+    draw();
+  } else {
+    const dx = Math.round(p.x - drag.p0.x), dy = Math.round(p.y - drag.p0.y), o = drag.o;
+    const t = drag.s < 0 ? clips[drag.f] : clips[drag.f].subs[drag.s];
+    if (drag.mode === "move") { t.x = o.x + dx; t.y = o.y + dy; }
+    else { t.w = Math.max(1, o.w + dx); t.h = Math.max(1, o.h + dy); }
+    updateRowInputs(drag.f, drag.s);
+    if (drag.s < 0) clips[drag.f].subs.forEach((_, s) => drawThumb(drag.f, s));
+    draw();
+  }
+});
+window.addEventListener("mouseup", () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.mode === "new") {
+    if (d.abs.w > 1 || d.abs.h > 1) {
+      if (d.sub) {
+        const c = clips[d.f];
+        c.subs.push({ x: d.abs.x - c.x, y: d.abs.y - c.y, w: d.abs.w, h: d.abs.h, path: defaultSubPath(c) });
+        renderTable(); select(d.f, c.subs.length - 1, true); focusPath(d.f, c.subs.length - 1);
+      } else {
+        clips.push({ ...d.abs, path: nextName(), out: true, subs: [] });
+        renderTable(); select(clips.length - 1, -1, true); focusPath(clips.length - 1, -1);
+      }
+    } else select(-1, -1);
+  }
+  validate(); persist(); draw();
+});
+function focusPath(f, s) { const inp = rowOf(f, s)?.querySelector("input.path"); if (inp) { inp.focus(); inp.select(); } }
+
+/* keyboard nudge */
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea") || $("ioModal").classList.contains("open") || $("pvModal").classList.contains("open")) return;
+  const it = selItem(); if (!it) return;
+  const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (k) {
+    e.preventDefault(); const s = e.ctrlKey || e.metaKey ? 8 : 1;
+    if (e.shiftKey) { it.w = Math.max(1, it.w + k[0] * s); it.h = Math.max(1, it.h + k[1] * s); }
+    else { it.x += k[0] * s; it.y += k[1] * s; }
+    updateRowInputs(sel.f, sel.s);
+    if (sel.s < 0) clips[sel.f].subs.forEach((_, j) => drawThumb(sel.f, j));
+    validate(); persist(); draw();
+  } else if (e.key === "Delete") removeItem(sel.f, sel.s);
+  else if (e.key === "Escape") select(-1, -1);
+});
+
+/* ---------- naming ---------- */
+function nextName() {
+  let n = clips.length + 1, name;
+  const used = new Set(clips.map(c => c.path));
+  do { name = `clip_${String(n++).padStart(2, "0")}.png`; } while (used.has(name));
+  return name;
+}
+function defaultSubPath(c) { return "{dir}/{name}_part{s}.png"; }
+function cleanPath(p) {
+  let s = String(p).trim().replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/^\/+/, "");
+  s = s.split("/").filter(seg => seg && seg !== "." && seg !== "..").join("/");
+  if (s && !/\.png$/i.test(s)) s += ".png";
+  return s;
+}
+function frameVars(f) {
+  const fp = cleanPath(clips[f].path);
+  const cut = fp.lastIndexOf("/");
+  return { dir: cut >= 0 ? fp.slice(0, cut) : "", name: fp ? fp.slice(cut + 1).replace(/\.png$/i, "") : `frame_${String(f + 1).padStart(2, "0")}`, n: f + 1 };
+}
+function subPath(f, s) {
+  const v = { ...frameVars(f), s: s + 1 };
+  return cleanPath(clips[f].subs[s].path.replace(/\{(name|dir|n|s)(?::(\d+))?\}/g, (_, k, pad) => pad ? String(v[k]).padStart(+pad, "0") : String(v[k])));
+}
+
+/* ---------- table ---------- */
+function rowOf(f, s) { return tbody.querySelector(`tr[data-f="${f}"][data-s="${s}"]`); }
+function makeRow(f, s) {
+  const isSub = s >= 0, c = clips[f], it = isSub ? c.subs[s] : c;
+  const tr = document.createElement("tr");
+  tr.dataset.f = f; tr.dataset.s = s;
+  if (isSub) tr.className = "sub";
+  tr.innerHTML = `<td class="idx" title="Select">${isSub ? `${f + 1}.${s + 1}` : f + 1}</td><td><canvas class="thumb" width="36" height="36"></canvas></td>
+    <td><input type="number" data-k="x" title="${isSub ? "x relative to frame" : "x"}"></td><td><input type="number" data-k="y" title="${isSub ? "y relative to frame" : "y"}"></td>
+    <td><input type="number" data-k="w" min="1"></td><td><input type="number" data-k="h" min="1"></td>
+    <td class="pathcell"><input type="text" class="path" data-k="path" spellcheck="false" placeholder="${isSub ? "{dir}/{name}_part{s}.png" : c.subs.length ? "(empty = export sub-pictures only)" : "folder/name.png"}"><div class="resolved"></div></td>
+    <td>${isSub ? "" : `<input type="checkbox" class="out" title="Export the full frame as its own file">`}</td>
+    <td class="act">${isSub ? "" : `<button class="mini addsub" title="Add a sub-picture to this frame">+ sub</button> `}<button class="icon del" title="Delete">✕</button></td>`;
+  tr.querySelectorAll("input[data-k]").forEach(inp => {
+    inp.value = it[inp.dataset.k];
+    inp.addEventListener("focus", () => select(f, s));
+    inp.addEventListener("input", () => {
+      const k = inp.dataset.k;
+      if (k === "path") it.path = inp.value;
+      else { const v = parseInt(inp.value, 10); if (!isNaN(v)) it[k] = (k === "w" || k === "h") ? Math.max(1, v) : v; }
+      drawThumb(f, s);
+      if (!isSub) c.subs.forEach((_, j) => drawThumb(f, j));
+      validate(); persist(); draw();
+    });
+  });
+  const ob = tr.querySelector("input.out");
+  if (ob) { ob.checked = c.out; ob.onchange = () => { c.out = ob.checked; validate(); persist(); }; }
+  tr.cells[0].onclick = () => select(f, s, true);
+  tr.cells[1].onclick = () => { select(f, s, true); openPreview(f, s); };
+  tr.cells[1].title = "Click for large preview";
+  tr.querySelector("button.del").onclick = () => removeItem(f, s);
+  const ab = tr.querySelector("button.addsub");
+  if (ab) ab.onclick = () => addSub(f);
+  return tr;
+}
+function renderTable() {
+  tbody.innerHTML = "";
+  clips.forEach((c, f) => { tbody.appendChild(makeRow(f, -1)); c.subs.forEach((_, s) => tbody.appendChild(makeRow(f, s))); });
+  $("emptyMsg").style.display = clips.length ? "none" : "block";
+  clips.forEach((c, f) => { drawThumb(f, -1); c.subs.forEach((_, s) => drawThumb(f, s)); });
+  markSel(); validate();
+}
+function updateRowInputs(f, s) {
+  const tr = rowOf(f, s); if (!tr) return;
+  const it = s < 0 ? clips[f] : clips[f].subs[s];
+  tr.querySelectorAll("input[type=number]").forEach(inp => { if (document.activeElement !== inp) inp.value = it[inp.dataset.k]; });
+  drawThumb(f, s); validate();
+}
+function drawThumb(f, s) {
+  const t = rowOf(f, s)?.querySelector("canvas.thumb"); if (!t) return;
+  const g = t.getContext("2d"); g.clearRect(0, 0, 36, 36);
+  if (!img) return;
+  const c = absRect(f, s), k = Math.min(36 / c.w, 36 / c.h);
+  g.imageSmoothingEnabled = k < 1;
+  const w = c.w * k, h = c.h * k;
+  g.drawImage(img, c.x, c.y, c.w, c.h, (36 - w) / 2, (36 - h) / 2, w, h);
+}
+function select(f, s, scroll) {
+  sel = { f, s }; markSel(); draw();
+  if (scroll && f >= 0) rowOf(f, s)?.scrollIntoView({ block: "nearest" });
+}
+function markSel() { [...tbody.rows].forEach(r => r.classList.toggle("sel", +r.dataset.f === sel.f && +r.dataset.s === sel.s)); }
+function removeItem(f, s) {
+  if (f < 0 || !clips[f]) return;
+  if (s < 0) { clips.splice(f, 1); sel = clips.length ? { f: Math.min(f, clips.length - 1), s: -1 } : { f: -1, s: -1 }; }
+  else { clips[f].subs.splice(s, 1); sel = { f, s: clips[f].subs.length ? Math.min(s, clips[f].subs.length - 1) : -1 }; }
+  renderTable(); persist(); draw();
+}
+function addSub(f) {
+  const c = clips[f];
+  const prev = c.subs[c.subs.length - 1];
+  const u = prev ? { ...prev, path: defaultSubPath(c) } : { x: 0, y: 0, w: Math.max(1, c.w >> 1), h: Math.max(1, c.h >> 1), path: defaultSubPath(c) };
+  c.subs.push(u); renderTable(); select(f, c.subs.length - 1, true); focusPath(f, c.subs.length - 1); persist();
+}
+$("addRow").onclick = () => {
+  const last = clips[clips.length - 1];
+  const c = last ? { x: last.x + last.w, y: last.y, w: last.w, h: last.h } : { x: 0, y: 0, w: 32, h: 32 };
+  clips.push({ ...c, path: nextName(), out: true, subs: [] }); renderTable(); select(clips.length - 1, -1, true); persist();
+};
+$("dupRow").onclick = () => {
+  if (sel.f < 0 || !clips[sel.f]) { setMsg("Select a frame to duplicate.", "warn"); return; }
+  const src = clips[sel.f];
+  const c = { ...src, path: nextName(), subs: src.subs.map(u => ({ ...u })) };
+  clips.splice(sel.f + 1, 0, c); renderTable(); select(sel.f + 1, -1, true); persist();
+};
+function armed(btn, label, action) {
+  if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; action(); return; }
+  btn.dataset.armed = 1; btn.textContent = "Click again to confirm";
+  setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; } }, 2500);
+}
+$("clearAll").onclick = function () { if (clips.length) armed(this, "Clear", () => { clips = []; sel = { f: -1, s: -1 }; renderTable(); persist(); draw(); }); };
+$("copySubs").onclick = function () {
+  const f = sel.f;
+  if (f < 0 || !clips[f]) { setMsg("Select a frame (or one of its sub-pictures) first.", "warn"); return; }
+  if (!clips[f].subs.length) { setMsg(`Frame ${f + 1} has no sub-pictures to copy.`, "warn"); return; }
+  armed(this, "Copy selected frame’s subs to all frames", () => {
+    const tpl = clips[f].subs;
+    clips.forEach((c, j) => { if (j !== f) c.subs = tpl.map(u => ({ ...u })); });
+    renderTable(); persist(); draw();
+    const v = validate();
+    setMsg(`Copied ${tpl.length} sub-picture(s) to ${clips.length - 1} frames.` + (v.errors ? " Some paths now collide — use {name} or {n} in sub paths." : ""), v.errors ? "warn" : "ok");
+  });
+};
+$("allOut").onclick = () => { const on = !clips.every(c => c.out); clips.forEach(c => c.out = on); renderTable(); persist(); setMsg(on ? "All full frames will be exported." : "Only sub-pictures will be exported for frames that have them.", "ok"); };
+$("zipName").addEventListener("input", e => { e.target.dataset.touched = 1; persist(); });
+
+/* ---------- grid generator ---------- */
+function fmtPattern(p, vars) { return p.replace(/\{(i|r|c)(?::(\d+))?\}/g, (_, k, pad) => String(vars[k]).padStart(pad ? +pad : 0, "0")); }
+$("gAdd").onclick = () => {
+  const v = id => parseInt($(id).value, 10) || 0;
+  const x0 = v("gX"), y0 = v("gY"), w = Math.max(1, v("gW")), h = Math.max(1, v("gH"));
+  const cols = Math.max(1, v("gC")), rows = Math.max(1, v("gR")), gx = v("gGX"), gy = v("gGY"), s = v("gS");
+  const pat = $("gP").value || "frame_{i}.png";
+  let i = s;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++)
+    clips.push({ x: x0 + c * (w + gx), y: y0 + r * (h + gy), w, h, path: fmtPattern(pat, { i: i++, r, c }), out: true, subs: [] });
+  renderTable(); select(clips.length - 1, -1, true); persist();
+  setMsg(`Added ${rows * cols} frames.`, "ok");
+};
+
+/* ---------- validation ---------- */
+function outputs() { // [{f,s,path}]
+  const o = [];
+  clips.forEach((c, f) => {
+    const fp = cleanPath(c.path);
+    // A frame with sub-pictures is exported only if it has a name and "out" is ticked; unnamed = sub-pictures only.
+    if (c.subs.length ? (c.out && fp) : true) o.push({ f, s: -1, path: fp });
+    c.subs.forEach((_, s) => o.push({ f, s, path: subPath(f, s) }));
+  });
+  return o;
+}
+function validate() {
+  const outs = outputs(), counts = {};
+  outs.forEach(o => { const p = o.path.toLowerCase(); if (p) counts[p] = (counts[p] || 0) + 1; });
+  const exported = new Set(outs.map(o => o.f + ":" + o.s));
+  let errors = 0, warns = 0;
+  const check = (f, s, path) => {
+    const tr = rowOf(f, s); if (!tr) return;
+    const pin = tr.querySelector("input.path"), res = tr.querySelector(".resolved");
+    const isOut = exported.has(f + ":" + s);
+    const p = path.toLowerCase();
+    const bad = isOut && (!p || counts[p] > 1);
+    pin.classList.toggle("bad", bad); pin.classList.toggle("off", !isOut);
+    pin.title = !isOut ? (path ? "Full frame not exported (out unticked) — only its sub-pictures" : "No name — full frame not exported, only its sub-pictures") : !p ? "Path is empty" : counts[p] > 1 ? "Duplicate output path: " + path : path;
+    const raw = (s < 0 ? clips[f] : clips[f].subs[s]).path.trim();
+    res.textContent = !isOut ? (path ? "frame not exported (out unticked)" : "no name → only sub-pictures exported") : (s >= 0 && path && path !== raw) || (counts[p] > 1) ? "→ " + (path || "(empty)") + (counts[p] > 1 ? "  (duplicate)" : "") : "";
+    if (bad) errors++;
+    let oob;
+    if (s < 0) oob = img && (clips[f].x < 0 || clips[f].y < 0 || clips[f].x + clips[f].w > img.naturalWidth || clips[f].y + clips[f].h > img.naturalHeight);
+    else { const u = clips[f].subs[s]; oob = u.x < 0 || u.y < 0 || u.x + u.w > clips[f].w || u.y + u.h > clips[f].h; }
+    tr.querySelectorAll("input[type=number]").forEach(n => { n.classList.toggle("warn", !!oob); n.title = oob ? (s < 0 ? "Extends outside the image (outside area will be transparent)" : "Extends outside its frame") : ""; });
+    if (oob && isOut) warns++;
+  };
+  clips.forEach((c, f) => { check(f, -1, cleanPath(c.path)); c.subs.forEach((_, s) => check(f, s, subPath(f, s))); });
+  $("process").disabled = !img || !outs.length || errors > 0;
+  return { errors, warns, outs };
+}
+
+/* ---------- ZIP writer (store, no compression; PNG is already compressed) ---------- */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(entries) { // entries: [{name, data:Uint8Array|null (dir)}]
+  const enc = new TextEncoder(), parts = [], central = [];
+  const d = new Date();
+  const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  let offset = 0;
+  for (const e of entries) {
+    const name = enc.encode(e.name), data = e.data || new Uint8Array(0), crc = e.data ? crc32(data) : 0;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+    parts.push(new Uint8Array(lh.buffer), name, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 0x031E, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true);
+    ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true);
+    ch.setUint16(30, 0, true); ch.setUint16(32, 0, true); ch.setUint16(34, 0, true); ch.setUint16(36, 0, true);
+    ch.setUint32(38, e.data ? (0o100644 << 16) >>> 0 : ((0o40755 << 16) | 0x10) >>> 0, true); ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), name);
+    offset += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((s, a) => s + a.length, 0);
+  const eo = new DataView(new ArrayBuffer(22));
+  eo.setUint32(0, 0x06054b50, true); eo.setUint16(8, entries.length, true); eo.setUint16(10, entries.length, true);
+  eo.setUint32(12, cdSize, true); eo.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, new Uint8Array(eo.buffer)], { type: "application/zip" });
+}
+
+/* ---------- process ---------- */
+function clipToPng(r) {
+  return new Promise((res, rej) => {
+    const t = document.createElement("canvas"); t.width = r.w; t.height = r.h;
+    t.getContext("2d").drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    t.toBlob(b => b ? b.arrayBuffer().then(a => res(new Uint8Array(a)), rej) : rej(new Error("PNG encode failed")), "image/png");
+  });
+}
+$("process").onclick = async () => {
+  const v = validate();
+  if (!img || !v.outs.length || v.errors) { setMsg(v.errors ? "Fix empty or duplicate paths (red) first." : "Nothing to process.", "bad"); return; }
+  const btn = $("process"); btn.disabled = true;
+  try {
+    const entries = [], dirs = new Set();
+    let nSub = 0;
+    for (let i = 0; i < v.outs.length; i++) {
+      const o = v.outs[i];
+      setMsg(`Encoding ${i + 1}/${v.outs.length}…`);
+      const segs = o.path.split("/"); for (let k = 1; k < segs.length; k++) dirs.add(segs.slice(0, k).join("/") + "/");
+      entries.push({ name: o.path, data: await clipToPng(absRect(o.f, o.s)) });
+      if (o.s >= 0) nSub++;
+    }
+    let zn = $("zipName").value.trim() || imgName + ".zip"; if (!/\.zip$/i.test(zn)) zn += ".zip";
+    // Frame table as JSON at the zip root (same format as Import / export), so the cut can be re-loaded later.
+    let jn = (zn.replace(/\.zip$/i, "").split("/").pop() || "sprites") + ".json";
+    if (entries.some(e => e.name.toLowerCase() === jn.toLowerCase())) jn = jn.replace(/\.json$/, ".clips.json");
+    const json = { name: jn, data: new TextEncoder().encode(toJSON() + "\n") };
+    const zip = makeZip([...[...dirs].sort().map(n => ({ name: n, data: null })), json, ...entries]);
+    const r = await saveFile(zn, zip);
+    const kb = (zip.size / 1024).toFixed(1);
+    if (r === "saved") setMsg(`✓ ${zn} — ${entries.length - nSub} frame(s) + ${nSub} sub-picture(s) in ${dirs.size} folder${dirs.size === 1 ? "" : "s"} + ${jn}, ${kb} KB` + (v.warns ? ` (${v.warns} extended past an edge)` : ""), v.warns ? "warn" : "ok");
+    else if (r === "declined") setMsg("Download was declined.", "warn");
+    else setMsg("Another download prompt is open — try again in a moment.", "warn");
+  } catch (e) { setMsg("Failed: " + e.message, "bad"); }
+  finally { validate(); }
+};
+function setMsg(t, cls) { const m = $("msg"); m.textContent = t; m.className = cls || ""; }
+
+/* ---------- import / export ---------- */
+function toJSON() {
+  const lines = clips.map(c => {
+    const base = JSON.stringify({ x: c.x, y: c.y, w: c.w, h: c.h, path: c.path, out: c.out });
+    if (!c.subs.length) return "  " + base;
+    return "  " + base.slice(0, -1) + ", \"subs\": [\n" + c.subs.map(u => "    " + JSON.stringify(u)).join(",\n") + "\n  ]}";
+  });
+  return `{"zip": ${JSON.stringify($("zipName").value)}, "clips": [\n${lines.join(",\n")}\n]}`;
+}
+$("ioBtn").onclick = () => { $("ioText").value = toJSON(); $("ioErr").textContent = ""; $("ioModal").classList.add("open"); };
+$("ioClose").onclick = () => $("ioModal").classList.remove("open");
+$("ioCopy").onclick = async () => { try { await navigator.clipboard.writeText($("ioText").value); $("ioCopy").textContent = "Copied"; } catch (e) { $("ioText").select(); $("ioCopy").textContent = "Press Ctrl+C"; } setTimeout(() => $("ioCopy").textContent = "Copy", 1500); };
+$("ioSave").onclick = async () => {
+  try { const r = await saveFile(imgName + ".clips.json", new Blob([$("ioText").value], { type: "application/json" })); if (r !== "saved") $("ioErr").textContent = "Save " + r + "."; }
+  catch (e) { $("ioErr").textContent = "Save failed: " + e.message; }
+};
+$("ioFile").addEventListener("change", async e => { const f = e.target.files[0]; if (f) $("ioText").value = await f.text(); e.target.value = ""; });
+function parseIO(txt) {
+  txt = txt.trim();
+  if (txt.startsWith("{") || txt.startsWith("[")) {
+    const j = JSON.parse(txt); const arr = Array.isArray(j) ? j : j.clips;
+    if (!Array.isArray(arr)) throw new Error("JSON needs a \"clips\" array");
+    return { clips: arr.map(normClip), zip: j.zip };
+  }
+  const out = [];
+  for (const line of txt.split(/\r?\n/)) {
+    const t = line.trim(); if (!t || t.startsWith("#")) continue;
+    const p = t.split(/[,;\t]/).map(s => s.trim());
+    if (/^sub$/i.test(p[0])) {
+      if (!out.length) throw new Error("A 'sub' line must come after a frame line");
+      if (p.length < 6) continue;
+      out[out.length - 1].subs.push(normRect({ x: p[1], y: p[2], w: p[3], h: p[4], path: p.slice(5).join(",") }));
+      continue;
+    }
+    if (p.length < 5 || isNaN(parseInt(p[0], 10))) continue; // skips header
+    out.push(normClip({ x: p[0], y: p[1], w: p[2], h: p[3], path: p.slice(4).join(",") }));
+  }
+  return { clips: out };
+}
+$("ioApply").onclick = () => {
+  try {
+    const r = parseIO($("ioText").value);
+    clips = r.clips; if (r.zip) { $("zipName").value = r.zip; $("zipName").dataset.touched = 1; }
+    sel = { f: -1, s: -1 }; renderTable(); persist(); draw(); $("ioModal").classList.remove("open");
+    setMsg(`Loaded ${clips.length} frames, ${clips.reduce((a, c) => a + c.subs.length, 0)} sub-pictures.`, "ok");
+  } catch (e) { $("ioErr").textContent = "Could not parse: " + e.message; }
+};
+
+/* ---------- large preview ---------- */
+const pv = { seq: [], idx: 0, scale: 0, fit: true, timer: null };
+const pvCv = $("pvCv"), pvG = pvCv.getContext("2d");
+function pvSequence(f, s) {
+  if (s < 0) return clips.map((_, j) => ({ f: j, s: -1 }));
+  return clips.map((c, j) => c.subs[s] ? { f: j, s } : null).filter(Boolean);
+}
+function pvFitScale() {
+  const st = $("pvStage"), aw = st.clientWidth - 24, ah = st.clientHeight - 24;
+  let mw = 1, mh = 1; for (const it of pv.seq) { const r = absRect(it.f, it.s); mw = Math.max(mw, r.w); mh = Math.max(mh, r.h); }
+  const k = Math.min(aw / mw, ah / mh);
+  return k >= 1 ? Math.floor(k) : Math.max(0.1, Math.floor(k * 10) / 10);
+}
+function pvDraw() {
+  if (!img || !pv.seq.length) return;
+  const it = pv.seq[pv.idx]; if (!clips[it.f] || (it.s >= 0 && !clips[it.f].subs[it.s])) return;
+  if (pv.fit) pv.scale = pvFitScale();
+  const r = absRect(it.f, it.s), k = pv.scale;
+  pvCv.width = Math.max(1, Math.round(r.w * k)); pvCv.height = Math.max(1, Math.round(r.h * k));
+  pvG.imageSmoothingEnabled = k < 1;
+  pvG.clearRect(0, 0, pvCv.width, pvCv.height);
+  pvG.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, pvCv.width, pvCv.height);
+  if (it.s < 0 && clips[it.f].subs.length && !pv.timer) { // outline sub-pictures on a still frame
+    pvG.setLineDash([4, 3]); pvG.strokeStyle = "#ffcc33"; pvG.lineWidth = 1;
+    clips[it.f].subs.forEach(u => pvG.strokeRect(u.x * k + .5, u.y * k + .5, u.w * k - 1, u.h * k - 1));
+    pvG.setLineDash([]);
+  }
+  const path = it.s < 0 ? cleanPath(clips[it.f].path) : subPath(it.f, it.s);
+  $("pvTitle").textContent = (it.s < 0 ? `#${it.f + 1}` : `#${it.f + 1}.${it.s + 1}`) + "  " + (path || "(no path)");
+  $("pvInfo").textContent = `${r.w}×${r.h} @ ${r.x},${r.y}`;
+  $("pvSeq").textContent = `${pv.idx + 1} / ${pv.seq.length}`;
+  $("pvZ").textContent = (k >= 1 ? k : k.toFixed(1)) + "×" + (pv.fit ? " fit" : "");
+}
+function openPreview(f, s) {
+  if (!img) { setMsg("Open a sprite sheet first.", "warn"); return; }
+  pv.seq = pvSequence(f, s); pv.idx = Math.max(0, pv.seq.findIndex(it => it.f === f && it.s === s)); pv.fit = true;
+  $("pvModal").classList.add("open"); pvDraw();
+}
+function pvStep(d) { if (!pv.seq.length) return; pv.idx = (pv.idx + d + pv.seq.length) % pv.seq.length; const it = pv.seq[pv.idx]; select(it.f, it.s, true); pvDraw(); }
+function pvStop() { clearInterval(pv.timer); pv.timer = null; $("pvPlay").textContent = "▶ Play"; pvDraw(); }
+function pvPlay() {
+  if (pv.timer) { pvStop(); return; }
+  if (pv.seq.length < 2) return;
+  const fps = Math.min(60, Math.max(1, parseInt($("pvFps").value, 10) || 8));
+  pv.timer = setInterval(() => { pv.idx = (pv.idx + 1) % pv.seq.length; pvDraw(); }, 1000 / fps);
+  $("pvPlay").textContent = "❚❚ Pause";
+}
+function pvClose() { pvStop(); $("pvModal").classList.remove("open"); const it = pv.seq[pv.idx]; if (it) select(it.f, it.s, true); }
+function pvZoom(dir) {
+  const steps = [0.5, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64];
+  const cur = pv.scale || 1;
+  pv.fit = false;
+  pv.scale = dir > 0 ? (steps.find(q => q > cur) ?? cur) : ([...steps].reverse().find(q => q < cur) ?? cur);
+  pvDraw();
+}
+$("pvClose").onclick = pvClose;
+$("pvModal").addEventListener("mousedown", e => { if (e.target === $("pvModal")) pvClose(); });
+$("pvPrev").onclick = () => { if (pv.timer) pvStop(); pvStep(-1); };
+$("pvNext").onclick = () => { if (pv.timer) pvStop(); pvStep(1); };
+$("pvPlay").onclick = pvPlay;
+$("pvFps").addEventListener("change", () => { if (pv.timer) { pvStop(); pvPlay(); } });
+$("pvZIn").onclick = () => pvZoom(1);
+$("pvZOut").onclick = () => pvZoom(-1);
+$("pvFit").onclick = () => { pv.fit = true; pvDraw(); };
+$("pvBg").addEventListener("click", e => {
+  const b = e.target.closest("button[data-bg]"); if (!b) return;
+  $("pvBg").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+  $("pvStage").className = "pvStage " + b.dataset.bg; store.set("spritesplitter.pvbg", b.dataset.bg);
+});
+{ const bg = store.get("spritesplitter.pvbg"); if (bg) $("pvBg").querySelector(`[data-bg="${bg}"]`)?.click(); }
+document.addEventListener("keydown", e => {
+  if (!$("pvModal").classList.contains("open") || e.target.matches("input,textarea")) return;
+  if (e.key === "Escape") pvClose();
+  else if (e.key === "ArrowLeft") { e.preventDefault(); $("pvPrev").onclick(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); $("pvNext").onclick(); }
+  else if (e.key === " ") { e.preventDefault(); pvPlay(); }
+  else if (e.key === "+" || e.key === "=") pvZoom(1);
+  else if (e.key === "-") pvZoom(-1);
+  else if (e.key === "0") $("pvFit").onclick();
+});
+window.addEventListener("resize", () => { if ($("pvModal").classList.contains("open") && pv.fit) pvDraw(); });
+
+/* ---------- PWA: offline service worker, install button, "Open with" file handling ---------- */
+if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvt = e; $("installBtn").style.display = ""; });
+$("installBtn").onclick = async () => {
+  if (!installEvt) return;
+  installEvt.prompt();
+  try { await installEvt.userChoice; } catch (e) {}
+  installEvt = null; $("installBtn").style.display = "none";
+};
+window.addEventListener("appinstalled", () => { $("installBtn").style.display = "none"; });
+if ("launchQueue" in window) {
+  launchQueue.setConsumer(async params => {
+    const h = params.files && params.files[0];
+    if (h) { try { loadBlob(await h.getFile()); } catch (e) { setMsg("Could not open that file.", "bad"); } }
+  });
+}
+
+restore(); renderTable();
+</script>
+</body>
+</html>
